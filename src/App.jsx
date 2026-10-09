@@ -313,6 +313,49 @@ function Player({ roomId, roomData, isHost }) {
     if (!isHost) return;
     updateDoc(roomRef, { 'videoState.isPlaying': true, 'videoState.currentTime': videoRef.current.currentTime, 'videoState.updatedAt': Date.now() });
   };
+function Player({ roomId, roomData, isHost }) {
+  const videoRef = useRef(null);
+  const [videoInput, setVideoInput] = useState('');
+  const [playError, setPlayError] = useState(false);
+
+  const roomRef = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId);
+
+  useEffect(() => {
+    if (!videoRef.current || isHost || !roomData.videoUrl) return;
+    const vid = videoRef.current;
+    const { isPlaying, currentTime } = roomData.videoState;
+
+    if (Math.abs(vid.currentTime - currentTime) > 1.5) {
+      vid.currentTime = currentTime;
+    }
+
+    if (isPlaying && vid.paused) {
+      vid.play().catch(() => setPlayError(true));
+    } else if (!isPlaying && !vid.paused) {
+      vid.pause();
+    }
+  }, [roomData.videoState, isHost, roomData.videoUrl]);
+
+  const handleSetVideo = async (e) => {
+    e.preventDefault();
+    if (!isHost) return;
+    
+    // Type "test" to quickly load a sample public video, or paste any direct MP4 link
+    const url = videoInput.toLowerCase() === 'test' 
+      ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' 
+      : videoInput;
+      
+    await updateDoc(roomRef, { 
+      videoUrl: url,
+      videoState: { isPlaying: false, currentTime: 0, updatedAt: Date.now() }
+    });
+    setVideoInput('');
+  };
+
+  const handleHostPlay = () => {
+    if (!isHost) return;
+    updateDoc(roomRef, { 'videoState.isPlaying': true, 'videoState.currentTime': videoRef.current.currentTime, 'videoState.updatedAt': Date.now() });
+  };
 
   const handleHostPause = () => {
     if (!isHost) return;
@@ -329,36 +372,32 @@ function Player({ roomId, roomData, isHost }) {
       {!roomData.videoUrl ? (
         <div className="p-6 text-center w-full max-w-sm">
           {isHost ? (
-            <div className="bg-neutral-900/80 p-6 rounded-3xl border border-neutral-800 shadow-xl">
+            <form onSubmit={handleSetVideo} className="bg-neutral-900/80 p-6 rounded-3xl border border-neutral-800 shadow-xl">
               <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
-                <Upload className="w-6 h-6" />
+                <Video className="w-6 h-6" />
               </div>
-              <h3 className="text-base font-bold text-white mb-1">Upload Video</h3>
-              <p className="text-xs text-neutral-400 mb-5">Select a video file straight from your phone storage.</p>
+              <h3 className="text-base font-bold text-white mb-1">Load a Video</h3>
+              <p className="text-xs text-neutral-400 mb-4">Paste a direct MP4 URL or type <span className="text-indigo-400 font-mono">test</span> for a sample video.</p>
               
-              {uploading ? (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs text-neutral-400 font-mono">
-                    <span>Uploading...</span>
-                    <span>{uploadProgress}%</span>
-                  </div>
-                  <div className="w-full bg-neutral-950 rounded-full h-2 overflow-hidden border border-neutral-800">
-                    <div className="bg-indigo-600 h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
-                  </div>
-                </div>
-              ) : (
-                <label className="block w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-3 px-4 rounded-xl cursor-pointer transition-colors shadow-lg shadow-indigo-600/20">
-                  Choose Phone Video
-                  <input type="file" accept="video/*" onChange={handleFileUpload} className="hidden" />
-                </label>
-              )}
-            </div>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={videoInput}
+                  onChange={(e) => setVideoInput(e.target.value)}
+                  placeholder="https://... or 'test'"
+                  className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500"
+                />
+                <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2 rounded-xl transition-colors">
+                  Load
+                </button>
+              </div>
+            </form>
           ) : (
             <div className="text-neutral-500 flex flex-col items-center">
               <div className="w-12 h-12 rounded-2xl bg-neutral-900 flex items-center justify-center mb-3 border border-neutral-800">
                 <Video className="w-6 h-6 opacity-40" />
               </div>
-              <p className="text-xs font-medium text-neutral-400">Waiting for Host to upload a video...</p>
+            <p className="text-xs font-medium text-neutral-400">Waiting for Host to load a video...</p>
             </div>
           )}
         </div>
@@ -389,6 +428,7 @@ function Player({ roomId, roomData, isHost }) {
     </div>
   );
 }
+
 
 function ParticipantBar({ participants, roomId, userId }) {
   const toggleMute = async () => {
