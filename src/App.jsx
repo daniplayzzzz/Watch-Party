@@ -272,12 +272,12 @@ function Player({ roomId, roomData, isHost }) {
     }
   }, [roomData.videoState, isHost, roomData.videoUrl]);
 
-  const handleSetVideo = async (e) => {
+    const handleSetVideo = async (e) => {
     e.preventDefault();
     if (!isHost) return;
     
     const url = videoInput.toLowerCase() === 'test' 
-      ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' 
+      ? 'https://www.w3schools.com/html/mov_bbb.mp4' 
       : videoInput;
       
     await updateDoc(roomRef, { 
@@ -286,6 +286,7 @@ function Player({ roomId, roomData, isHost }) {
     });
     setVideoInput('');
   };
+
 
   const handleHostPlay = () => {
     if (!isHost) return;
