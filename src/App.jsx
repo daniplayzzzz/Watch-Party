@@ -1,9 +1,8 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
-  signInWithCustomToken, 
   onAuthStateChanged 
 } from 'firebase/auth';
 import { 
@@ -19,11 +18,16 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { 
+  getStorage, 
+  ref as storageRef, 
+  uploadBytesResumable, 
+  getDownloadURL 
+} from 'firebase/storage';
+import { 
   Play, Pause, Mic, MicOff, Users, Video, 
-  MessageSquare, Send, Upload, Copy, LogOut, Link2 
+  MessageSquare, Send, Upload, Copy, LogOut, Loader2 
 } from 'lucide-react';
 
-// Your custom Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCtVjPMSuedoCFFegxsIXt23fvzt-4IbVE",
   authDomain: "watch-party-4a3fc.firebaseapp.com",
@@ -36,34 +40,22 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 const appId = 'watchparty-default';
 
-// Constants for collections
 const ROOMS_COL = 'watchparty_rooms';
 const PARTICIPANTS_COL = 'participants';
 const MESSAGES_COL = 'messages';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('landing'); // 'landing' | 'room'
+  const [view, setView] = useState('landing');
   const [roomId, setRoomId] = useState('');
   const [userName, setUserName] = useState('');
   const [error, setError] = useState('');
 
-  // Firebase Auth setup
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Error:", err);
-      }
-    };
-    initAuth();
+    signInAnonymously(auth).catch(err => console.error("Auth Error:", err));
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
@@ -71,20 +63,16 @@ export default function App() {
   const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const handleCreateRoom = async () => {
-    if (!userName.trim()) return setError('Please enter a name');
-    if (!user) return setError('Not authenticated yet');
+    if (!userName.trim()) return setError('Please enter your name');
+    if (!user) return setError('Connecting to server...');
     
     const newRoomId = generateRoomId();
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, newRoomId);
     
     await setDoc(roomRef, {
       hostId: user.uid,
-      videoUrl: '', // Default empty video
-      videoState: {
-        isPlaying: false,
-        currentTime: 0,
-        updatedAt: Date.now()
-      },
+      videoUrl: '',
+      videoState: { isPlaying: false, currentTime: 0, updatedAt: Date.now() },
       createdAt: serverTimestamp()
     });
 
@@ -93,17 +81,15 @@ export default function App() {
   };
 
   const handleJoinRoom = async () => {
-    if (!userName.trim()) return setError('Please enter a name');
+    if (!userName.trim()) return setError('Please enter your name');
     if (!roomId.trim()) return setError('Please enter a Room ID');
-    if (!user) return setError('Not authenticated yet');
+    if (!user) return setError('Connecting to server...');
 
     const cleanRoomId = roomId.toUpperCase().trim();
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, cleanRoomId);
-    
     const roomSnap = await getDoc(roomRef);
-    if (!roomSnap.exists()) {
-      return setError('Room not found');
-    }
+    
+    if (!roomSnap.exists()) return setError('Room not found');
 
     setRoomId(cleanRoomId);
     setView('room');
@@ -112,16 +98,16 @@ export default function App() {
   if (!user) {
     return (
       <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-white">
-        <div className="animate-pulse flex flex-col items-center">
-          <Video className="w-12 h-12 mb-4 text-indigo-500" />
-          <p>Connecting to WatchParty...</p>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="text-sm text-neutral-400">Initializing WatchParty...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans">
       {view === 'landing' ? (
         <Landing 
           userName={userName} setUserName={setUserName}
@@ -142,62 +128,55 @@ export default function App() {
 function Landing({ userName, setUserName, roomId, setRoomId, onCreate, onJoin, error }) {
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col justify-center px-6 py-12">
-      <div className="text-center mb-10">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/20 text-indigo-400 mb-6">
+      <div className="text-center mb-8">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/10 text-indigo-400 mb-4 border border-indigo-500/20">
           <Video className="w-8 h-8" />
         </div>
-        <h1 className="text-3xl font-bold bg-gradient-to-br from-white to-neutral-500 bg-clip-text text-transparent">
-          WatchParty
-        </h1>
-        <p className="text-neutral-400 mt-2">Sync videos & chill with friends</p>
+        <h1 className="text-3xl font-extrabold tracking-tight text-white">WatchParty</h1>
+        <p className="text-neutral-400 text-sm mt-1">Sync videos & chat with friends instantly</p>
       </div>
 
-      <div className="space-y-6 bg-neutral-900/50 p-6 rounded-3xl border border-neutral-800 backdrop-blur-xl">
-        {error && <div className="p-3 rounded-xl bg-red-500/10 text-red-400 text-sm border border-red-500/20">{error}</div>}
+      <div className="space-y-5 bg-neutral-900/60 p-6 rounded-3xl border border-neutral-800 shadow-2xl backdrop-blur-xl">
+        {error && <div className="p-3 rounded-xl bg-red-500/10 text-red-400 text-xs border border-red-500/20">{error}</div>}
         
         <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">Your Name</label>
+          <label className="block text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Your Name</label>
           <input 
             type="text" 
             value={userName} 
             onChange={e => setUserName(e.target.value)}
-            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors"
-            placeholder="e.g. John Doe"
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors"
+            placeholder="e.g. Daniel"
           />
         </div>
 
-        <div className="pt-4 border-t border-neutral-800">
+        <button 
+          onClick={onCreate}
+          className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl px-4 py-3 text-sm transition-all shadow-lg shadow-indigo-600/20 flex justify-center items-center gap-2"
+        >
+          <Video className="w-4 h-4" /> Create New Room
+        </button>
+
+        <div className="relative flex items-center py-1">
+          <div className="flex-grow border-t border-neutral-800"></div>
+          <span className="flex-shrink-0 mx-4 text-neutral-600 text-xs uppercase tracking-wider">or join room</span>
+          <div className="flex-grow border-t border-neutral-800"></div>
+        </div>
+
+        <div className="flex gap-2">
+          <input 
+            type="text" 
+            value={roomId} 
+            onChange={e => setRoomId(e.target.value)}
+            className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors uppercase tracking-widest font-mono"
+            placeholder="ROOM ID"
+          />
           <button 
-            onClick={onCreate}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl px-4 py-3 transition-colors flex justify-center items-center gap-2 shadow-lg shadow-indigo-500/20"
+            onClick={onJoin}
+            className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-sm rounded-xl px-5 transition-colors border border-neutral-700"
           >
-            <Video className="w-5 h-5" /> Create New Room
+            Join
           </button>
-        </div>
-
-        <div className="relative flex items-center py-2">
-          <div className="flex-grow border-t border-neutral-800"></div>
-          <span className="flex-shrink-0 mx-4 text-neutral-500 text-sm">or</span>
-          <div className="flex-grow border-t border-neutral-800"></div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-neutral-400 mb-2">Join Existing Room</label>
-          <div className="flex gap-2">
-            <input 
-              type="text" 
-              value={roomId} 
-              onChange={e => setRoomId(e.target.value)}
-              className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors uppercase"
-              placeholder="ROOM ID"
-            />
-            <button 
-              onClick={onJoin}
-              className="bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-xl px-6 transition-colors border border-neutral-700"
-            >
-              Join
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -211,46 +190,30 @@ function Room({ roomId, user, userName, onLeave }) {
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId);
   const participantsRef = collection(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId, PARTICIPANTS_COL);
 
-  // Sync Room Data
   useEffect(() => {
-    const unsub = onSnapshot(roomRef, 
-      (doc) => setRoomData(doc.exists() ? doc.data() : null),
-      (err) => console.error("Room sync error:", err)
-    );
+    const unsub = onSnapshot(roomRef, (doc) => setRoomData(doc.exists() ? doc.data() : null));
     return () => unsub();
   }, [roomId]);
 
-  // Sync Participants
   useEffect(() => {
-    const unsub = onSnapshot(participantsRef, 
-      (snap) => {
-        const parts = [];
-        snap.forEach(doc => parts.push({ id: doc.id, ...doc.data() }));
-        setParticipants(parts);
-      },
-      (err) => console.error("Participants sync error:", err)
-    );
+    const unsub = onSnapshot(participantsRef, (snap) => {
+      const parts = [];
+      snap.forEach(doc => parts.push({ id: doc.id, ...doc.data() }));
+      setParticipants(parts);
+    });
     return () => unsub();
   }, [roomId]);
 
-  // Join/Leave room effects
   useEffect(() => {
     const userDocRef = doc(participantsRef, user.uid);
-    setDoc(userDocRef, {
-      name: userName,
-      isMuted: true,
-      joinedAt: serverTimestamp()
-    });
-
-    return () => {
-      deleteDoc(userDocRef).catch(console.error);
-    };
+    setDoc(userDocRef, { name: userName, isMuted: true, joinedAt: serverTimestamp() });
+    return () => { deleteDoc(userDocRef).catch(() => {}); };
   }, [roomId, user.uid, userName]);
 
   if (!roomData) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="animate-pulse text-neutral-400">Loading Room...</div>
+      <div className="h-screen flex items-center justify-center bg-neutral-950">
+        <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
       </div>
     );
   }
@@ -258,21 +221,17 @@ function Room({ roomId, user, userName, onLeave }) {
   const isHost = roomData.hostId === user.uid;
 
   return (
-    <div className="flex flex-col h-[100dvh] overflow-hidden bg-black">
-      {/* Top Navigation */}
-      <header className="flex items-center justify-between px-4 py-3 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-900 z-10">
+    <div className="flex flex-col h-[100dvh] overflow-hidden bg-neutral-950">
+      <header className="flex items-center justify-between px-4 py-3 bg-neutral-900/80 backdrop-blur-md border-b border-neutral-800 z-10">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-500/20 text-indigo-400 p-2 rounded-lg">
-            <Video className="w-5 h-5" />
+          <div className="bg-indigo-500/10 text-indigo-400 p-2 rounded-xl border border-indigo-500/20">
+            <Video className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="font-semibold text-sm leading-tight">WatchParty</h2>
-            <div className="flex items-center gap-2 text-xs text-neutral-400">
-              <span>ID: {roomId}</span>
-              <button 
-                onClick={() => navigator.clipboard.writeText(roomId)}
-                className="hover:text-white transition-colors"
-              >
+            <h2 className="font-bold text-xs uppercase tracking-wider text-neutral-300">WatchParty Room</h2>
+            <div className="flex items-center gap-2 text-xs text-neutral-400 font-mono mt-0.5">
+              <span>{roomId}</span>
+              <button onClick={() => navigator.clipboard.writeText(roomId)} className="text-indigo-400 hover:text-indigo-300">
                 <Copy className="w-3 h-3" />
               </button>
             </div>
@@ -280,34 +239,18 @@ function Room({ roomId, user, userName, onLeave }) {
         </div>
         <button 
           onClick={onLeave}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-sm font-medium hover:bg-red-500/20 transition-colors border border-red-500/20"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 transition-colors border border-red-500/20"
         >
-          <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Leave</span>
+          <LogOut className="w-3.5 h-3.5" /> Leave
         </button>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        <div className="flex-1 flex flex-col min-h-[40vh] md:min-h-0 bg-neutral-950">
-          <Player 
-            roomId={roomId} 
-            roomData={roomData} 
-            isHost={isHost} 
-          />
-          
-          <ParticipantBar 
-            participants={participants} 
-            roomId={roomId} 
-            userId={user.uid}
-            isHost={isHost}
-          />
+      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        <div className="flex-1 flex flex-col bg-neutral-950">
+          <Player roomId={roomId} roomData={roomData} isHost={isHost} />
+          <ParticipantBar participants={participants} roomId={roomId} userId={user.uid} />
         </div>
-        
-        <ChatPanel 
-          roomId={roomId} 
-          user={user} 
-          userName={userName} 
-        />
+        <ChatPanel roomId={roomId} user={user} userName={userName} />
       </main>
     </div>
   );
@@ -315,104 +258,107 @@ function Room({ roomId, user, userName, onLeave }) {
 
 function Player({ roomId, roomData, isHost }) {
   const videoRef = useRef(null);
-  const [videoInput, setVideoInput] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [playError, setPlayError] = useState(false);
 
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId);
 
-  // Sync logic for Viewers
   useEffect(() => {
     if (!videoRef.current || isHost || !roomData.videoUrl) return;
-
     const vid = videoRef.current;
     const { isPlaying, currentTime } = roomData.videoState;
 
-    // Check drift
     if (Math.abs(vid.currentTime - currentTime) > 1.5) {
       vid.currentTime = currentTime;
     }
 
     if (isPlaying && vid.paused) {
-      vid.play().catch(e => {
-        console.log("Autoplay prevented:", e);
-        setPlayError(true);
-      });
+      vid.play().catch(() => setPlayError(true));
     } else if (!isPlaying && !vid.paused) {
       vid.pause();
     }
   }, [roomData.videoState, isHost, roomData.videoUrl]);
 
-  // Host Control Handlers
+  
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !isHost) return;
+
+    setUploading(true);
+    const fileRef = storageRef(storage, `rooms/${roomId}/${Date.now()}_${file.name}`);
+    const uploadTask = uploadBytesResumable(fileRef, file);
+
+    uploadTask.on('state_changed', 
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(Math.round(progress));
+      }, 
+      (error) => {
+        console.error("Upload error:", error);
+        setUploading(false);
+      }, 
+      async () => {
+        const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+        await updateDoc(roomRef, { 
+          videoUrl: downloadUrl,
+          videoState: { isPlaying: false, currentTime: 0, updatedAt: Date.now() }
+        });
+        setUploading(false);
+      }
+    );
+  };
+
   const handleHostPlay = () => {
     if (!isHost) return;
-    updateDoc(roomRef, {
-      'videoState.isPlaying': true,
-      'videoState.currentTime': videoRef.current.currentTime,
-      'videoState.updatedAt': Date.now()
-    });
+    updateDoc(roomRef, { 'videoState.isPlaying': true, 'videoState.currentTime': videoRef.current.currentTime, 'videoState.updatedAt': Date.now() });
   };
 
   const handleHostPause = () => {
     if (!isHost) return;
-    updateDoc(roomRef, {
-      'videoState.isPlaying': false,
-      'videoState.currentTime': videoRef.current.currentTime,
-      'videoState.updatedAt': Date.now()
-    });
+    updateDoc(roomRef, { 'videoState.isPlaying': false, 'videoState.currentTime': videoRef.current.currentTime, 'videoState.updatedAt': Date.now() });
   };
 
   const handleHostSeek = () => {
     if (!isHost) return;
-    updateDoc(roomRef, {
-      'videoState.currentTime': videoRef.current.currentTime,
-      'videoState.updatedAt': Date.now()
-    });
-  };
-
-  const handleSetVideo = async (e) => {
-    e.preventDefault();
-    if (!isHost) return;
-    const url = videoInput.toLowerCase() === 'test' 
-      ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' 
-      : videoInput;
-      
-    await updateDoc(roomRef, { 
-      videoUrl: url,
-      videoState: { isPlaying: false, currentTime: 0, updatedAt: Date.now() }
-    });
-    setVideoInput('');
+    updateDoc(roomRef, { 'videoState.currentTime': videoRef.current.currentTime, 'videoState.updatedAt': Date.now() });
   };
 
   return (
-    <div className="relative w-full aspect-video bg-black flex flex-col justify-center items-center border-b border-neutral-900 group">
+    <div className="relative w-full aspect-video bg-black flex flex-col justify-center items-center border-b border-neutral-900">
       {!roomData.videoUrl ? (
-        <div className="p-6 text-center w-full max-w-lg">
+        <div className="p-6 text-center w-full max-w-sm">
           {isHost ? (
-            <form onSubmit={handleSetVideo} className="space-y-4">
-              <div className="bg-neutral-900/50 p-6 rounded-2xl border border-neutral-800">
-                <Video className="w-12 h-12 text-neutral-500 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold mb-2">Load a Video</h3>
-                <p className="text-sm text-neutral-400 mb-6">Paste a direct MP4 URL or type "test" for a sample video.</p>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={videoInput}
-                    onChange={(e) => setVideoInput(e.target.value)}
-                    placeholder="https://..."
-                    className="flex-1 bg-black border border-neutral-700 rounded-xl px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                  />
-                  <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl font-medium transition-colors">
-                    Load
-                  </button>
-                </div>
+            <div className="bg-neutral-900/80 p-6 rounded-3xl border border-neutral-800 shadow-xl">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
+                <Upload className="w-6 h-6" />
               </div>
-            </form>
+              <h3 className="text-base font-bold text-white mb-1">Upload Video</h3>
+              <p className="text-xs text-neutral-400 mb-5">Select a video file straight from your phone storage.</p>
+              
+              {uploading ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs text-neutral-400 font-mono">
+                    <span>Uploading...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-neutral-950 rounded-full h-2 overflow-hidden border border-neutral-800">
+                    <div className="bg-indigo-600 h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+                  </div>
+                </div>
+              ) : (
+                <label className="block w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-3 px-4 rounded-xl cursor-pointer transition-colors shadow-lg shadow-indigo-600/20">
+                  Choose Phone Video
+                  <input type="file" accept="video/*" onChange={handleFileUpload} className="hidden" />
+                </label>
+              )}
+            </div>
           ) : (
             <div className="text-neutral-500 flex flex-col items-center">
-              <div className="w-16 h-16 rounded-full bg-neutral-900 flex items-center justify-center mb-4">
-                <Video className="w-8 h-8 opacity-50" />
+              <div className="w-12 h-12 rounded-2xl bg-neutral-900 flex items-center justify-center mb-3 border border-neutral-800">
+                <Video className="w-6 h-6 opacity-40" />
               </div>
-              <p className="font-medium">Waiting for Host to start a video...</p>
+              <p className="text-xs font-medium text-neutral-400">Waiting for Host to upload a video...</p>
             </div>
           )}
         </div>
@@ -431,20 +377,11 @@ function Player({ roomId, roomData, isHost }) {
           {!isHost && playError && (
             <div className="absolute inset-0 bg-black/80 flex items-center justify-center backdrop-blur-sm z-20">
               <button 
-                onClick={() => {
-                  videoRef.current.play();
-                  setPlayError(false);
-                }}
-                className="bg-indigo-600 px-6 py-3 rounded-xl font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/30 animate-pulse"
+                onClick={() => { videoRef.current.play(); setPlayError(false); }}
+                className="bg-indigo-600 text-white text-xs px-5 py-2.5 rounded-xl font-semibold shadow-xl shadow-indigo-600/30 animate-pulse flex items-center gap-2"
               >
-                <Play className="w-5 h-5" /> Click to Sync Playback
+                <Play className="w-4 h-4" /> Tap to Sync Playback
               </button>
-            </div>
-          )}
-          {!isHost && !playError && (
-            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-medium text-white flex items-center gap-2 border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-              Synced with Host
             </div>
           )}
         </>
@@ -453,52 +390,46 @@ function Player({ roomId, roomData, isHost }) {
   );
 }
 
-function ParticipantBar({ participants, roomId, userId, isHost }) {
+function ParticipantBar({ participants, roomId, userId }) {
   const toggleMute = async () => {
     const myDoc = doc(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId, PARTICIPANTS_COL, userId);
     const me = participants.find(p => p.id === userId);
-    if (me) {
-      await updateDoc(myDoc, { isMuted: !me.isMuted });
-    }
+    if (me) await updateDoc(myDoc, { isMuted: !me.isMuted });
   };
 
   const me = participants.find(p => p.id === userId);
 
   return (
-    <div className="bg-neutral-950 p-3 md:p-4 border-b border-neutral-900">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider flex items-center gap-2">
-          <Users className="w-3.5 h-3.5" /> 
-          Party Members ({participants.length}/6)
+    <div className="bg-neutral-950 p-3 border-b border-neutral-900">
+      <div className="flex items-center justify-between mb-2.5">
+        <h3 className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5" /> Members ({participants.length}/6)
         </h3>
         
         <button 
           onClick={toggleMute}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
             me?.isMuted 
-              ? 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700' 
-              : 'bg-green-500/20 text-green-400 border border-green-500/30'
+              ? 'bg-neutral-900 text-neutral-400 border border-neutral-800' 
+              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
           }`}
         >
-          {me?.isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          <span className="hidden sm:inline">{me?.isMuted ? 'Muted' : 'Speaking'}</span>
+          {me?.isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+          <span>{me?.isMuted ? 'Muted' : 'Speaking'}</span>
         </button>
       </div>
       
-      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+      <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-hide">
         {participants.slice(0, 6).map((p) => {
           const isMe = p.id === userId;
           return (
-            <div key={p.id} className="flex flex-col items-center gap-1 min-w-[60px]">
-              <div className={`relative w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold
-                ${!p.isMuted ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-neutral-950 bg-gradient-to-br from-indigo-500 to-purple-600' : 'bg-neutral-800 border border-neutral-700'}
+            <div key={p.id} className="flex flex-col items-center gap-1 min-w-[50px]">
+              <div className={`relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white
+                ${!p.isMuted ? 'ring-2 ring-emerald-500 bg-gradient-to-br from-indigo-500 to-purple-600' : 'bg-neutral-900 border border-neutral-800 text-neutral-300'}
               `}>
                 {p.name.charAt(0).toUpperCase()}
-                
-                <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-neutral-950 flex items-center justify-center
-                  ${p.isMuted ? 'bg-neutral-700' : 'bg-green-500'}
-                `}>
-                  {p.isMuted ? <MicOff className="w-2.5 h-2.5 text-neutral-400" /> : <Mic className="w-2.5 h-2.5 text-white" />}
+                <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border border-neutral-950 flex items-center justify-center ${p.isMuted ? 'bg-neutral-700' : 'bg-emerald-500'}`}>
+                  {p.isMuted ? <MicOff className="w-2 h-2 text-neutral-400" /> : <Mic className="w-2 h-2 text-white" />}
                 </div>
               </div>
               <span className="text-[10px] text-neutral-400 truncate w-full text-center">
@@ -520,65 +451,45 @@ function ChatPanel({ roomId, user, userName }) {
   const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', ROOMS_COL, roomId, MESSAGES_COL);
 
   useEffect(() => {
-    const unsub = onSnapshot(messagesRef, 
-      (snap) => {
-        const msgs = [];
-        snap.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
-        msgs.sort((a, b) => {
-          const timeA = a.createdAt?.toMillis() || Date.now();
-          const timeB = b.createdAt?.toMillis() || Date.now();
-          return timeA - timeB;
-        });
-        setMessages(msgs);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      },
-      (err) => console.error("Chat sync error:", err)
-    );
+    const unsub = onSnapshot(messagesRef, (snap) => {
+      const msgs = [];
+      snap.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+      msgs.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
+      setMessages(msgs);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    });
     return () => unsub();
   }, [roomId]);
 
   const handleSend = async (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-
     const text = newMessage;
-    setNewMessage(''); 
-    
-    await addDoc(messagesRef, {
-      userId: user.uid,
-      userName: userName,
-      text: text,
-      createdAt: serverTimestamp()
-    });
-  };
-
-  return (
-    <div className="flex-1 md:w-80 md:flex-none flex flex-col bg-neutral-900 border-l border-neutral-800">
-      <div className="p-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur z-10 flex items-center gap-2">
+    setNewMessage('');
+    await addDoc(messagesRef, { userId: user.uid, userName, text, createdAt: serverTimestamp() });
+  };      
+return (
+    <div className="flex-1 md:w-80 md:flex-none flex flex-col bg-neutral-900/40 border-l border-neutral-900">
+      <div className="p-3 border-b border-neutral-900 bg-neutral-950/60 backdrop-blur flex items-center gap-2">
         <MessageSquare className="w-4 h-4 text-neutral-400" />
-        <h3 className="text-sm font-semibold text-neutral-300">Room Chat</h3>
+        <h3 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Live Chat</h3>
       </div>
       
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-neutral-500 space-y-2">
-            <MessageSquare className="w-8 h-8 opacity-20" />
-            <p className="text-sm">No messages yet. Say hi!</p>
+          <div className="h-full flex flex-col items-center justify-center text-neutral-600 space-y-1">
+            <MessageSquare className="w-6 h-6 opacity-20" />
+            <p className="text-xs">No messages yet. Say hi!</p>
           </div>
         ) : (
           messages.map((msg, i) => {
             const isMe = msg.userId === user.uid;
             const showName = i === 0 || messages[i-1].userId !== msg.userId;
-            
             return (
               <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                {!isMe && showName && (
-                  <span className="text-[10px] text-neutral-500 mb-1 ml-1">{msg.userName}</span>
-                )}
-                <div className={`px-4 py-2 rounded-2xl max-w-[85%] text-sm ${
-                  isMe 
-                    ? 'bg-indigo-600 text-white rounded-tr-sm' 
-                    : 'bg-neutral-800 text-neutral-200 rounded-tl-sm border border-neutral-700'
+                {!isMe && showName && <span className="text-[10px] text-neutral-500 mb-0.5 ml-1">{msg.userName}</span>}
+                <div className={`px-3.5 py-2 rounded-2xl max-w-[85%] text-xs ${
+                  isMe ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-neutral-900 text-neutral-200 rounded-tl-sm border border-neutral-800'
                 }`}>
                   {msg.text}
                 </div>
@@ -589,25 +500,24 @@ function ChatPanel({ roomId, user, userName }) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-3 bg-neutral-900 border-t border-neutral-800">
+      <div className="p-3 bg-neutral-950/80 border-t border-neutral-900">
         <form onSubmit={handleSend} className="flex gap-2">
           <input
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 bg-black border border-neutral-700 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+            className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
           <button 
             type="submit"
             disabled={!newMessage.trim()}
-            className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white disabled:opacity-50 disabled:bg-neutral-800 transition-colors"
+            className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white disabled:opacity-40 disabled:bg-neutral-900 transition-colors shadow-md shadow-indigo-600/20"
           >
-            <Send className="w-4 h-4 -ml-0.5" />
+            <Send className="w-3.5 h-3.5 -ml-0.5" />
           </button>
         </form>
       </div>
     </div>
   );
 }
-
