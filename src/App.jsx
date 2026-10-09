@@ -495,3 +495,4 @@ function ChatPanel({ roomId, user, userName }) {
       </div>
     </div>
   );
+}
